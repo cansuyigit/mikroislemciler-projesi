@@ -1,0 +1,1033 @@
+name "kernel"
+
+#make_bin#
+
+; where to load? (for emulator. all these values are saved into .binf file)
+#load_segment=0800#
+#load_offset=0000#
+
+; these values are set to registers on load, actually only ds, es, cs, ip, ss, sp are
+; important. these values are used for the emulator to emulate real microprocessor state 
+; after micro-os_loader transfers control to this kernel (as expected).
+#al=0b#
+#ah=00#
+#bh=00#
+#bl=00#
+#ch=00#
+#cl=02#
+#dh=00#
+#dl=00#
+#ds=0800#
+#es=0800#
+#si=7c02#
+#di=0000#
+#bp=0000#
+#cs=0800#
+#ip=0000#
+#ss=07c0#
+#sp=03fe#
+
+
+
+putc    macro   char    ;al'de bir karakter yazdirir
+        push    ax
+        mov     al, char
+        mov     ah, 0eh
+        int     10h     
+        pop     ax
+endm
+
+
+; imlec konumu:
+gotoxy  macro   col, row
+        push    ax
+        push    bx
+        push    dx
+        mov     ah, 02h
+        mov     dh, row
+        mov     dl, col
+        mov     bh, 0
+        int     10h
+        pop     dx
+        pop     bx
+        pop     ax
+endm
+
+
+print macro x, y, attrib, sdat
+LOCAL   s_dcl, skip_dcl, s_dcl_end
+    pusha
+    mov dx, cs
+    mov es, dx
+    mov ah, 13h
+    mov al, 1
+    mov bh, 0
+    mov bl, attrib
+    mov cx, offset s_dcl_end - offset s_dcl
+    mov dl, x
+    mov dh, y
+    mov bp, offset s_dcl
+    int 10h
+    popa
+    jmp skip_dcl
+    s_dcl DB sdat
+    s_dcl_end DB 0
+    skip_dcl:    
+endm
+
+
+
+; kernel is loaded at 0800:0000 by micro-os_loader
+org 0000h
+
+; veri ve fonksiyon aciklamasi bolumunu atlayin: 
+jmp start  ;jmp baslatilir
+; atlama komutu olan jmp'in ilk bayti 0E9h'dir
+; basarili calistirilip calistirimadigini belirlemek icin kulanilir
+; cekirdek bulunamazsa yukleyici bir hata mesaji yazdirir
+; cekirdek, sektor 2 yerine sektor 1'e yazildiginda F yazdirir
+           
+
+
+
+;==== data section =====================
+
+; hosgeldin mesaji:
+msg  db "Adorable-os'a Ho",159,"geldiniz!", 0 
+
+cmd_size        equ 10    ; komut buffer boyutu
+command_buffer  db cmd_size dup("b")
+clean_str       db cmd_size dup(" "), 0
+prompt          db ">", 0
+
+; komutlar:
+chelp    db "help", 0
+chelp_tail:
+ccls     db "cls", 0
+ccls_tail:
+cquit    db "quit", 0
+cquit_tail:
+cexit    db "exit", 0
+cexit_tail:
+creboot  db "reboot", 0
+creboot_tail: 
+cfactorial  db "factorial", 0
+cfactorial_tail:
+csayac  db "sayac", 0
+csayac_tail: 
+cprepared  db "name", 0
+cprepared_tail:
+
+help_msg db "Adorable-os'a Ho",159,"geldiniz!", 0Dh,0Ah
+         db "Desteklenen komutlar",141,"n k",141,"sa listesi:", 0Dh,0Ah
+         db "help   - Bu listeyi yazd",141,"r", 0Dh,0Ah
+         db "cls    - Ekran",141," temizle", 0Dh,0Ah
+         db "reboot - Makineyi yeniden ba",159,"lat", 0Dh,0Ah
+         db "quit   - Yeniden ba",159,"latma ile ayn",141,"", 0Dh,0Ah 
+         db "exit   - ",128,"",141,"k",141,"",159,"", 0Dh,0Ah
+         db "factorial   - fakt",148,"riyel al",141,"r", 0Dh,0Ah
+         db "sayac   - klavye ile girilen tu",159,"u sayar", 0Dh,0Ah
+         db "name - isim yazd",141,"rma", 0Dh,0Ah
+         db "Daha fazlas",141," i",135,"in beklemede kal",141,"n!", 0Dh,0Ah, 0
+
+
+pre1_msg db "Haz",141,"rlayanlar" , 0Dh , 0Ah , 0
+ 
+pre2_msg db "Cansu Yi",167,"it" , 0Dh , 0Ah , 0 
+ 
+pre3_msg db "Cena Ne",159,"evati", 0Dh , 0Ah , 0 
+
+
+unknown  db "Bilinmeyen komut: " , 0    
+
+;======================================
+
+start:
+
+; data segment'i ayarlar:
+push    cs
+pop     ds
+
+; varsayilan video modunu 80x25 olarak ayarla:
+mov     ah, 00h
+mov     al, 03h
+int     10h
+
+; dos/bios ile uyumluluk icin yanip sonme devre disi birakildi,
+; emulator ve Windows istemi asla yanip sonmez.
+mov     ax, 1003h
+mov     bx, 0      ; yanip sonmeyi devre disi.
+int     10h
+
+
+; *** butunluk kontrolu ***
+cmp [0000], 0E9h
+jz integrity_check_ok
+integrity_failed:  
+mov     al, 'F'
+mov     ah, 0eh
+int     10h       
+
+; herhangi bir anahtari bekle
+mov     ax, 0
+int     16h
+
+; yeniden baslat
+mov     ax, 0040h
+mov     ds, ax
+mov     w.[0072h], 0000h
+jmp	0ffffh:0000h	 
+integrity_check_ok:
+nop
+; *** ok ***
+              
+
+
+; ekrani temizle:
+call    clear_screen
+                     
+                       
+; mesaji yazdir :
+lea     si, msg
+call    print_string
+
+
+eternal_loop:
+call    get_command
+
+call    process_cmd
+
+; sonsuz dongu:
+jmp eternal_loop
+
+
+;===========================================
+get_command proc near
+
+;ekranin imlec konumunu asagi ayarlar:
+mov     ax, 40h
+mov     es, ax
+mov     al, es:[84h]
+
+gotoxy  0, al
+
+; komut satirini temizle:
+lea     si, clean_str
+call    print_string
+
+gotoxy  0, al
+
+; istemi goster:
+lea     si, prompt 
+call    print_string
+
+
+; bir komut icin bekle:
+mov     dx, cmd_size    ;buffer boyutu 
+lea     di, command_buffer
+call    get_string
+
+
+ret
+get_command endp
+;===========================================
+
+process_cmd proc    near
+
+;//// komut kontrolu ///
+; set es to ds
+push    ds
+pop     es
+
+cld     ; ileri karsilastirma.
+
+; komut buffer'ini help ile karsilastir
+lea     si, command_buffer
+mov     cx, chelp_tail - offset chelp   ; ['help',0] dizesinin boyutu.
+lea     di, chelp
+repe    cmpsb
+je      help_command
+
+; komut buffer'ini 'cls' ile karsilastirin
+lea     si, command_buffer
+mov     cx, ccls_tail - offset ccls  ; ['cls',0] dizesinin boyutu.
+lea     di, ccls
+repe    cmpsb
+jne     not_cls
+jmp     cls_command
+not_cls:
+
+; komut buffer'ini 'quit' ile karsilastirin
+lea     si, command_buffer
+mov     cx, cquit_tail - offset cquit ; ['quit',0] dizesinin boyutu.
+lea     di, cquit
+repe    cmpsb
+je      reboot_command
+
+; komut buffer'ini 'exit' ile karsilastirin
+lea     si, command_buffer
+mov     cx, cexit_tail - offset cexit ; ['exit',0] dizesinin boyutu.
+lea     di, cexit
+repe    cmpsb
+je      reboot_command
+
+; komut buffer'ini 'reboot' ile karsilastirin
+lea     si, command_buffer
+mov     cx, creboot_tail - offset creboot  ; ['reboot',0]dizesinin boyutu.
+lea     di, creboot
+repe    cmpsb
+je      reboot_command
+
+; komut buffer'ini 'factorial' ile karsilastirin
+lea     si, command_buffer
+mov     cx, cfactorial_tail - offset cfactorial  ; ['factorial',0] dizesinin boyutu.
+lea     di, cfactorial
+repe    cmpsb
+je      factorial_command  
+
+; komut buffer'ini 'sayac' ile karsilastirin
+lea     si, command_buffer
+mov     cx, csayac_tail - offset csayac  ; ['sayac',0] dizesinin boyutu.
+lea     di, csayac
+repe    cmpsb
+je      sayac_command 
+
+; komut buffer'ini 'name' ile karsilastirin
+lea     si, command_buffer
+mov     cx, cprepared_tail - offset cprepared  ; ['isim yazdirma',0] dizesinin boyutu.
+lea     di, cprepared
+repe    cmpsb
+je      prepared_command 
+
+
+
+; bos satirlari gormezden gel
+cmp     command_buffer, 0
+jz      processed
+
+
+;////////////////////////////
+
+mov     al, 1
+call    scroll_t_area
+                          
+;sadece imlec konumunu ayarla                          
+; islem satirinin ustunde:
+mov     ax, 40h
+mov     es, ax
+mov     al, es:[84h]
+dec     al
+gotoxy  0, al
+
+lea     si, unknown
+call    print_string
+
+lea     si, command_buffer
+call    print_string
+
+mov     al, 1
+call    scroll_t_area
+
+jmp     processed
+
+; +++++ 'help' komutu ++++++
+help_command:
+
+; metin alanini 9 satir yukari kaydir:
+mov     al, 9
+call    scroll_t_area
+
+; imlec konumunu 9 satira ayarla
+; islem satirinin ustunde:
+mov     ax, 40h
+mov     es, ax
+mov     al, es:[84h]
+sub     al, 11
+gotoxy  0, al
+
+lea     si, help_msg
+call    print_string
+
+mov     al, 1
+call    scroll_t_area
+
+jmp     processed
+
+
+
+
+; +++++ 'cls' komutu ++++++
+cls_command:
+call    clear_screen
+jmp     processed
+
+
+
+
+
+
+
+; +++ 'quit', 'cikis', 'yeniden baslatma' +++
+reboot_command:
+call    clear_screen
+print 5,2,0011_1111b," L",154,"tfen t",154,"m diskleri ",135,"",141,"kar",141,"n "
+print 5,3,0011_1111b," ve yeniden ba",159,"latmak i",135,"in herhangi bir tu",159,"a bas",141,"n... "
+mov ax, 0  ; herhangi bir anahtari bekle....
+int 16h
+
+; sihirli degeri 0040h:0072h'de saklayin:
+;   0000h - soguk baslatma.
+;   1234h - sicak baslatma.
+mov     ax, 0040h
+mov     ds, ax
+mov     w.[0072h], 0000h 
+jmp	0ffffh:0000h	 
+
+; ++++++++++++++++++++++++++
+
+processed:
+ret
+process_cmd endp
+
+;===========================================
+
+; son satir disindaki tum ekrani kaydir
+; al'de belirtilen degere kadar
+
+scroll_t_area   proc    near
+
+mov dx, 40h
+mov es, dx  ; ekran parametreleri almak icin.
+mov ah, 06h ; islev kimligini yukari kaydirin.
+mov bh, 07  ; yeni satirlarin ozelligi.
+mov ch, 0   ; ust sira.
+mov cl, 0   ; ust satir.
+mov di, 84h ; -1 ekraninda,
+mov dh, es:[di] ; alt satir (byte).
+dec dh  ; alt satiri kaydirmayin.
+mov di, 4ah ; ekrandaki sutunlar,
+mov dl, es:[di]
+dec dl  ; alt sutun.
+int 10h
+
+ret
+scroll_t_area   endp
+
+;===========================================
+
+
+
+
+; klavyeden karakterleri alin ve bos sonlandirilmis bir dize yazin
+; DS:DI'de arabellege almak icin maksimum arabellek boyutu DX'tir.
+; 'enter' girisi durdurur.
+get_string      proc    near
+push    ax
+push    cx
+push    di
+push    dx
+
+mov     cx, 0                   ; char sayaci.
+
+cmp     dx, 1                   ; buffer cok mu kucuk?
+jbe     empty_buffer            ;
+
+dec     dx                      ; son sifir icin yer ayir.
+
+
+;============================
+; elde edilecek sonsuz dongu
+; ve tus vuruslari isler:
+
+wait_for_key:
+
+mov     ah, 0                   ; tusuna basildi.
+int     16h
+
+cmp     al, 0Dh                 ; 'return'e basildi mi?
+jz      exit
+
+
+cmp     al, 8                   ; 'backspace' basildi mi?
+jne     add_to_buffer
+jcxz    wait_for_key            ; kaldirilacak bir sey yok!
+dec     cx
+dec     di
+putc    8                       ; geri al
+putc    ' '                     ; net konum
+putc    8                       ; tekrar geri al
+jmp     wait_for_key
+
+add_to_buffer:
+
+        cmp     cx, dx          ; buffer dolu mu?
+        jae     wait_for_key    ; oyleyse 'return' neya'backspace' bekleyin...
+
+        mov     [di], al
+        inc     di
+        inc     cx
+        
+        ; anahtari yazdir:
+        mov     ah, 0eh
+        int     10h
+
+jmp     wait_for_key
+;============================
+
+exit:
+
+; null ile sonladir:
+mov     [di], 0
+
+empty_buffer:
+
+pop     dx
+pop     di
+pop     cx
+pop     ax
+ret
+get_string      endp
+
+
+
+
+; gecerli imlecçkonumunda bos sonlandirilmis bir dize yazdirin,
+; dize adresi: ds:si
+print_string proc near
+push    ax      ; bellek registers...
+push    si      ;
+
+next_char:      
+        mov     al, [si]
+        cmp     al, 0
+        jz      printed
+        inc     si
+        mov     ah, 0eh ; teletip fonksiyon.
+        int     10h
+        jmp     next_char
+printed:
+
+pop     si      ; kayitlari yeniden sakla...
+pop     ax      ;
+
+ret
+print_string endp
+
+
+
+; tum ekran penceresini kaydirarak ekrani temizleyin,
+; ve imlec konumunu en uste ayarlayin.
+; varsayilan ozellik mavi uzerine beyaz olarak ayarlanmistir
+clear_screen proc near
+        push    ax      ; bellek registers...
+        push    ds      ;
+        push    bx      ;
+        push    cx      ;
+        push    di      ;
+
+        mov     ax, 40h
+        mov     ds, ax  ; ekran parametreleri almak icin
+        mov     ah, 06h ; islev kimligini yukari kaydirin. 
+        mov     al, 0   ; yeni satirlarin ozelligi.
+        mov     bh, 0000_1111b  ; attribute for new lines.
+        mov     ch, 0   ; ust sira.
+        mov     cl, 0   ; ust satir.
+        mov     di, 84h ; -1 ekraninda,
+        mov     dh, [di] ; alt satir (byte).
+        mov     di, 4ah ; alt satiri kaydirmayin.
+        mov     dl, [di]
+        dec     dl      ; alt sutun.
+        int     10h
+
+        ;ekranin imlec konumunu yukari ayarlar:
+        mov     bh, 0   ; gecerli  sayfa.
+        mov     dl, 0   ; sutun.
+        mov     dh, 0   ; satir.
+        mov     ah, 02
+        int     10h
+
+        pop     di      ; kaydi yeniden sakla...
+        pop     cx      ;
+        pop     bx      ;
+        pop     ds      ;
+        pop     ax      ;
+
+        ret
+clear_screen endp
+
+
+
+factorial_command: 
+call clear_screen 
+
+; bu ornek kullanicidan numarayi alir,
+; ve bunun icin faktoriyelini hesaplar.
+; 0'dan 8'e kadar desteklenen giris!
+
+
+
+; bu makro AL'de bir karakter yazdirir ve ilerler
+; gecerli imlec konumu:
+puts    macro   char
+        push    ax
+        mov     al, char
+        mov     ah, 0eh
+        int     10h     
+        pop     ax
+endm
+
+
+
+
+
+jmp basla
+
+
+result dw ?
+     
+
+
+basla:
+
+; ilk sayiyi al:
+
+	mov al, 1
+	mov bh, 0
+	mov bl, 0000_1011b
+	mov cx, msg1end - offset msg1 ; mesaj boyutunu hesapla. 
+	mov dl, 0
+	mov dh, 0
+	push cs
+	pop es
+	mov bp, offset msg1
+	mov ah, 13h
+	int 10h
+jmp n1
+msg1 db 0Dh,0Ah, 'Say',141,'y',141,' giriniz: '
+msg1end:
+n1:
+
+call    scan_num
+
+
+; 0! = 1:
+mov     ax, 1
+cmp     cx, 0
+je      print_result
+
+; sayiyi bx' tasiyin:
+; cx sayac olacaktir:
+
+mov     bx, cx
+
+mov     ax, 1
+mov     bx, 1
+
+calc_it:
+mul     bx
+cmp     dx, 0
+jne     overflow
+inc     bx
+loop    calc_it
+
+mov result, ax
+
+
+print_result:
+
+; sonucu ax'de yazdir:
+	mov al, 1
+	mov bh, 0
+	mov bl, 0000_1011b
+	mov cx, msg2end - offset msg2 ; mesaj boyutunu hesapla. 
+	mov dl, 2
+	mov dh, 2
+	push cs
+	pop es
+	mov bp, offset msg2
+	mov ah, 13h
+	int 10h
+jmp n2
+msg2 db 0Dh,0Ah, 'fakt',148,'riyel: '
+msg2end:
+n2:
+
+
+mov     ax, result
+call    print_num_uns
+jmp     exitf
+
+
+overflow:
+	mov al, 1
+	mov bh, 0
+	mov bl, 0000_1011b
+	mov cx, msg3end - offset msg3 ; mesaj boyutunu hesapla. 
+	mov dl, 2
+	mov dh, 2
+	push cs
+	pop es
+	mov bp, offset msg3
+	mov ah, 13h
+	int 10h
+jmp n3
+msg3 db 0Dh,0Ah, 'sonu',135,' ',135,'ok b',154,'y',154,'k!', 0Dh,0Ah, '0 ile 8 aras',141,'ndaki de',167,'erleri kullan',141,'n.'
+msg3end:
+n3:
+jmp   start
+
+exitf:
+
+;herhangi bir tusa basilmasini bekleyin:
+mov ah, 0
+int 16h
+
+ret
+
+
+
+
+
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; these functions are copied from emu8086.inc ;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+; klavyeden cok basamakli girilmis sayiyi alir,
+; ve sonucu cx register'ýnda saklar:
+SCAN_NUM        PROC    NEAR
+        PUSH    DX
+        PUSH    AX
+        PUSH    SI
+        
+        MOV     CX, 0
+
+        ; bayragi sifirla:
+        MOV     CS:make_minus, 0
+
+next_digit:
+
+        ; klavyeden karakter al
+        ; AL'ye:
+        MOV     AH, 00h
+        INT     16h
+        ; ve yazdir:
+        MOV     AH, 0Eh
+        INT     10h
+
+        ; eksiyi kontrol et:
+        CMP     AL, '-'
+        JE      set_minus
+
+        ; ENTER tusunu kontrol edin :
+        CMP     AL, 0Dh  ; satirbasi?
+        JNE     not_cr
+        JMP     stop_input
+not_cr:
+
+
+        CMP     AL, 8                   ; 'geri al'a basildi mi?
+        JNE     backspace_checked
+        MOV     DX, 0                   ; son rakami kaldir
+        MOV     AX, CX                  ; bolume gore:
+        DIV     CS:ten                  ; AX = DX:AX / 10 (DX-rem).
+        MOV     CX, AX
+        PUTs    ' '                     ; net pozisyon.
+        PUTs    8                       ; tekrar geri al.
+        JMP     next_digit
+backspace_checked:
+
+
+        ; yalnizca rakamlar izin ver:
+        CMP     AL, '0'
+        JAE     ok_AE_0
+        JMP     remove_not_digit
+ok_AE_0:        
+        CMP     AL, '9'
+        JBE     ok_digit
+remove_not_digit:       
+        PUTs    8       ; geri al.
+        PUTs    ' '     ; 
+        PUTs    8       ; tekrar geri al.        
+        JMP     next_digit ; sonraki girisi bekle.       
+ok_digit:
+
+
+        PUSH    AX
+        MOV     AX, CX
+        MUL     CS:ten                  ; DX:AX = AX*10
+        MOV     CX, AX
+        POP     AX
+
+        ; sayinin buyuk olup olmadigini kontrol etme
+        CMP     DX, 0
+        JNE     too_big
+
+        ; ASCII koduna donusturme:
+        SUB     AL, 30h
+
+        ; CX'e al ekle:
+        MOV     AH, 0
+        MOV     DX, CX      ; sonuc cok buyukse yedekleme.
+        ADD     CX, AX
+        JC      too_big2    ; sayi cok buyukse atla.
+
+        JMP     next_digit
+
+set_minus:
+        MOV     CS:make_minus, 1
+        JMP     next_digit
+
+too_big2:
+        MOV     CX, DX      ; eklemeden once yedeklenen degeri geri yukle
+        MOV     DX, 0       ; yedeklemeden once DX sifirdi!
+too_big:
+        MOV     AX, CX
+        DIV     CS:ten  ; 
+        MOV     CX, AX
+        PUTs    8       ; geri al.
+        PUTs    ' '     
+        PUTs    8               
+        JMP     next_digit ; Enter/Backspace icin bekle.
+        
+        
+stop_input:
+        ; kontrol flag:
+        CMP     CS:make_minus, 0
+        JE      not_minus
+        NEG     CX
+not_minus:
+
+        POP     SI
+        POP     AX
+        POP     DX
+        RET
+make_minus      DB      ?       ; bir flag kullan.
+SCAN_NUM        ENDP
+
+
+
+PRINT_NUM       PROC    NEAR
+        PUSH    DX
+        PUSH    AX
+
+        CMP     AX, 0
+        JNZ     not_zero
+
+        PUTs    '0'
+        JMP     printedd
+
+not_zero:
+        ; AX'in kontrol isareti,
+        ; negatifse mutlak yapin:
+        CMP     AX, 0
+        JNS     positive
+        NEG     AX
+
+        PUTs    '-'
+
+positive:
+        CALL    PRINT_NUM_UNS
+printedd:
+        POP     AX
+        POP     DX
+        RET
+PRINT_NUM       ENDP
+
+
+
+PRINT_NUM_UNS   PROC    NEAR
+        PUSH    AX
+        PUSH    BX
+        PUSH    CX
+        PUSH    DX
+
+        ; sayidan once sifira basilmasini onlemek icin flag:
+        MOV     CX, 1
+
+       
+        MOV     BX, 10000       ; 2710h - divider.
+
+        ; AX sifir mi?
+        CMP     AX, 0
+        JZ      print_zero
+
+begin_print:
+
+        ; bolucuyu kontrol edin (sifirsa end_print gidin):
+        CMP     BX,0
+        JZ      end_print
+
+        ; sayidan once sifira basmaktan kacinin:
+        CMP     CX, 0
+        JE      calc
+        ; if AX<BX ise DIV sonucu sifir olacaktir:
+        CMP     AX, BX
+        JB      skip
+calc:
+        MOV     CX, 0   
+
+        MOV     DX, 0
+        DIV     BX      ; AX = DX:AX / BX   (DX=remainder).
+
+        ; son rakami yazdir:
+        ADD     AL, 30h    
+        PUTs    AL
+
+
+        MOV     AX, DX  
+
+skip:
+        ; hesapla BX=BX/10
+        PUSH    AX
+        MOV     DX, 0
+        MOV     AX, BX
+        DIV     CS:ten  ; AX = DX:AX / 10   (DX=remainder).
+        MOV     BX, AX
+        POP     AX
+
+        JMP     begin_print
+        
+print_zero:
+        PUTs    '0'
+        
+end_print:
+
+        POP     DX
+        POP     CX
+        POP     BX
+        POP     AX
+        RET
+PRINT_NUM_UNS   ENDP
+
+
+
+ten             DW      10      
+
+
+
+
+sayac_command:
+call clear_screen
+
+
+; hosgeldin mesaji yazdir:
+	mov al, 1
+	mov bh, 0
+	mov bl, 0000_1011b
+	mov cx, msgaend - offset msga ; mesaj boyutunu hesapla. 
+	mov dl, 0
+	mov dh, 0
+	push cs
+	pop es
+	mov bp, offset msga
+	mov ah, 13h
+	int 10h
+
+xor bx, bx   
+
+wait:  mov ah, 0   ; herhangi bir anahtari bekle...
+       int 16h
+
+       cmp al, 27  ; anahtar 'esc' basildiginda cikis yap. 
+       je stop
+
+       mov ah, 0eh 
+       int 10h
+
+       inc bx ; her tusa basildginda bx'i artirir
+
+       jmp wait
+
+
+; sonuc mesajini yazdir:
+stop:  	
+    mov al, 1
+	mov bh, 0
+	mov cx, msgbend - offset msgb ; mesaj boyutunu hesapla. 
+	mov dl, 2
+	mov dh, 2
+	push cs
+	pop es
+	mov bp, offset msgb
+	mov ah, 13h
+	int 10h
+
+mov ax, bx
+call print_ax
+
+; herhangi bir tusa basilmasini bekleyin:
+mov ah, 0
+int 16h
+
+ret ; isletim sisteminden cikis.
+
+msga db "T",154,"m tu",159," say",141,"s",141,"n",141," sayaca",167,"",141,"m. Durdurmak i",135,"in 'Esc' tu",159,"una bas",141,"n...", 0Dh,0Ah,
+msgaend:
+msgb db 0Dh,0Ah, "Kaydedilen tu",159," say",141,"s",141," "
+msgbend: 
+
+
+
+
+   
+print_ax proc
+cmp ax, 0
+jne print_ax_r
+    push ax
+    mov al, '0'
+    mov ah, 0eh
+    int 10h
+    pop ax
+    ret 
+print_ax_r:
+    pusha
+    mov dx, 0
+    cmp ax, 0
+    je pn_done
+    mov bx, 10
+    div bx    
+    call print_ax_r
+    mov ax, dx
+    add al, 30h
+    mov ah, 0eh
+    int 10h    
+    jmp pn_done
+pn_done:
+    popa  
+    ret  
+endp
+    
+    
+    
+prepared_command:  
+call clear_screen
+
+; metin alanini 9 satir yukari kaydir:
+mov     al, 9
+call    scroll_t_area
+
+; imlec konumunu 9 satira ayarla
+; islem satirinin ustunde:
+gotoxy 2,2
+
+lea     si, pre1_msg
+call    print_string
+
+gotoxy 2,3
+
+lea     si, pre2_msg
+call    print_string
+
+gotoxy 2,4
+
+lea     si, pre3_msg
+call    print_string
+
+mov     al, 1
+call    scroll_t_area
+
+jmp     processed

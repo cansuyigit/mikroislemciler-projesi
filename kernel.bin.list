@@ -1,0 +1,1107 @@
+EMU8086 GENERATED LISTING. MACHINE CODE <- SOURCE.
+ 
+kernel.bin -- emu8086 assembler version: 4.08  
+ 
+[ 4.01.2024  --  21:56:48 ] 
+ 
+===================================================================================================
+[LINE]     LOC: MACHINE CODE                          SOURCE
+===================================================================================================
+ 
+[   1]        :                                       name "kernel"
+[   2]        :                                       
+[   3]        :                                       #make_bin#
+[   4]        :                                       
+[   5]        :                                       ; where to load? (for emulator. all these values are saved into .binf file)
+[   6]        :                                       #load_segment=0800#
+[   7]        :                                       #load_offset=0000#
+[   8]        :                                       
+[   9]        :                                       ; these values are set to registers on load, actually only ds, es, cs, ip, ss, sp are
+[  10]        :                                       ; important. these values are used for the emulator to emulate real microprocessor state
+[  11]        :                                       ; after micro-os_loader transfers control to this kernel (as expected).
+[  12]        :                                       #al=0b#
+[  13]        :                                       #ah=00#
+[  14]        :                                       #bh=00#
+[  15]        :                                       #bl=00#
+[  16]        :                                       #ch=00#
+[  17]        :                                       #cl=02#
+[  18]        :                                       #dh=00#
+[  19]        :                                       #dl=00#
+[  20]        :                                       #ds=0800#
+[  21]        :                                       #es=0800#
+[  22]        :                                       #si=7c02#
+[  23]        :                                       #di=0000#
+[  24]        :                                       #bp=0000#
+[  25]        :                                       #cs=0800#
+[  26]        :                                       #ip=0000#
+[  27]        :                                       #ss=07c0#
+[  28]        :                                       #sp=03fe#
+[  29]        :                                       
+[  30]        :                                       
+[  31]        :                                       
+[  32]        :                                       putc    macro   char    ;al'de bir karakter yazdirir
+[  33]        :                                       push    ax
+[  34]        :                                       mov     al, char
+[  35]        :                                       mov     ah, 0eh
+[  36]        :                                       int     10h
+[  37]        :                                       pop     ax
+[  38]        :                                       endm
+[  39]        :                                       
+[  40]        :                                       
+[  41]        :                                       ; imlec konumu:
+[  42]        :                                       gotoxy  macro   col, row
+[  43]        :                                       push    ax
+[  44]        :                                       push    bx
+[  45]        :                                       push    dx
+[  46]        :                                       mov     ah, 02h
+[  47]        :                                       mov     dh, row
+[  48]        :                                       mov     dl, col
+[  49]        :                                       mov     bh, 0
+[  50]        :                                       int     10h
+[  51]        :                                       pop     dx
+[  52]        :                                       pop     bx
+[  53]        :                                       pop     ax
+[  54]        :                                       endm
+[  55]        :                                       
+[  56]        :                                       
+[  57]        :                                       print macro x, y, attrib, sdat
+[  58]        :                                       LOCAL   s_dcl, skip_dcl, s_dcl_end
+[  59]        :                                       pusha
+[  60]        :                                       mov dx, cs
+[  61]        :                                       mov es, dx
+[  62]        :                                       mov ah, 13h
+[  63]        :                                       mov al, 1
+[  64]        :                                       mov bh, 0
+[  65]        :                                       mov bl, attrib
+[  66]        :                                       mov cx, offset s_dcl_end - offset s_dcl
+[  67]        :                                       mov dl, x
+[  68]        :                                       mov dh, y
+[  69]        :                                       mov bp, offset s_dcl
+[  70]        :                                       int 10h
+[  71]        :                                       popa
+[  72]        :                                       jmp skip_dcl
+[  73]        :                                       s_dcl DB sdat
+[  74]        :                                       s_dcl_end DB 0
+[  75]        :                                       skip_dcl:
+[  76]        :                                       endm
+[  77]        :                                       
+[  78]        :                                       
+[  79]        :                                       
+[  80]        :                                       ; kernel is loaded at 0800:0000 by micro-os_loader
+[  81]        :                                       org 0000h
+[  82]        :                                       
+[  83]        :                                       ; veri ve fonksiyon aciklamasi bolumunu atlayin:
+[  84]    0000: E9 F2 01                              jmp start  ;jmp baslatilir
+[  85]        :                                       ; atlama komutu olan jmp'in ilk bayti 0E9h'dir
+[  86]        :                                       ; basarili calistirilip calistirimadigini belirlemek icin kulanilir
+[  87]        :                                       ; cekirdek bulunamazsa yukleyici bir hata mesaji yazdirir
+[  88]        :                                       ; cekirdek, sektor 2 yerine sektor 1'e yazildiginda F yazdirir
+[  89]        :                                       
+[  90]        :                                       
+[  91]        :                                       
+[  92]        :                                       
+[  93]        :                                       ;==== data section =====================
+[  94]        :                                       
+[  95]        :                                       ; hosgeldin mesaji:
+[  96]    0003: 41 64 6F 72 61 62 6C 65 2D 6F 73 27   msg  db "Adorable-os'a Ho",159,"geldiniz!", 0
+                61 20 48 6F 9F 67 65 6C 64 69 6E 69 
+                7A 21 00                            
+[  97]        :                                       
+[  98]        :                                       cmd_size        equ 10    ; komut buffer boyutu
+[  99]    001E: 62 62 62 62 62 62 62 62 62 62         command_buffer  db cmd_size dup("b")
+[ 100]    0028: 20 20 20 20 20 20 20 20 20 20 00      clean_str       db cmd_size dup(" "), 0
+[ 101]    0033: 3E 00                                 prompt          db ">", 0
+[ 102]        :                                       
+[ 103]        :                                       ; komutlar:
+[ 104]    0035: 68 65 6C 70 00                        chelp    db "help", 0
+[ 105]    003A:                                       chelp_tail:
+[ 106]    003A: 63 6C 73 00                           ccls     db "cls", 0
+[ 107]    003E:                                       ccls_tail:
+[ 108]    003E: 71 75 69 74 00                        cquit    db "quit", 0
+[ 109]    0043:                                       cquit_tail:
+[ 110]    0043: 65 78 69 74 00                        cexit    db "exit", 0
+[ 111]    0048:                                       cexit_tail:
+[ 112]    0048: 72 65 62 6F 6F 74 00                  creboot  db "reboot", 0
+[ 113]    004F:                                       creboot_tail:
+[ 114]    004F: 66 61 63 74 6F 72 69 61 6C 00         cfactorial  db "factorial", 0
+[ 115]    0059:                                       cfactorial_tail:
+[ 116]    0059: 73 61 79 61 63 00                     csayac  db "sayac", 0
+[ 117]    005F:                                       csayac_tail:
+[ 118]    005F: 6E 61 6D 65 00                        cprepared  db "name", 0
+[ 119]    0064:                                       cprepared_tail:
+[ 120]        :                                       
+[ 121]    0064: 41 64 6F 72 61 62 6C 65 2D 6F 73 27   help_msg db "Adorable-os'a Ho",159,"geldiniz!", 0Dh,0Ah
+                61 20 48 6F 9F 67 65 6C 64 69 6E 69 
+                7A 21 0D 0A                         
+[ 122]    0080: 44 65 73 74 65 6B 6C 65 6E 65 6E 20   db "Desteklenen komutlar",141,"n k",141,"sa listesi:", 0Dh,0Ah
+                6B 6F 6D 75 74 6C 61 72 8D 6E 20 6B 
+                8D 73 61 20 6C 69 73 74 65 73 69 3A 
+                0D 0A                               
+[ 123]    00A6: 68 65 6C 70 20 20 20 2D 20 42 75 20   db "help   - Bu listeyi yazd",141,"r", 0Dh,0Ah
+                6C 69 73 74 65 79 69 20 79 61 7A 64 
+                8D 72 0D 0A                         
+[ 124]    00C2: 63 6C 73 20 20 20 20 2D 20 45 6B 72   db "cls    - Ekran",141," temizle", 0Dh,0Ah
+                61 6E 8D 20 74 65 6D 69 7A 6C 65 0D 
+                0A                                  
+[ 125]    00DB: 72 65 62 6F 6F 74 20 2D 20 4D 61 6B   db "reboot - Makineyi yeniden ba",159,"lat", 0Dh,0Ah
+                69 6E 65 79 69 20 79 65 6E 69 64 65 
+                6E 20 62 61 9F 6C 61 74 0D 0A       
+[ 126]    00FD: 71 75 69 74 20 20 20 2D 20 59 65 6E   db "quit   - Yeniden ba",159,"latma ile ayn",141,"", 0Dh,0Ah
+                69 64 65 6E 20 62 61 9F 6C 61 74 6D 
+                61 20 69 6C 65 20 61 79 6E 8D 0D 0A 
+                                                    
+[ 127]    0121: 65 78 69 74 20 20 20 2D 20 80 8D 6B   db "exit   - ",128,"",141,"k",141,"",159,"", 0Dh,0Ah
+                8D 9F 0D 0A                         
+[ 128]    0131: 66 61 63 74 6F 72 69 61 6C 20 20 20   db "factorial   - fakt",148,"riyel al",141,"r", 0Dh,0Ah
+                2D 20 66 61 6B 74 94 72 69 79 65 6C 
+                20 61 6C 8D 72 0D 0A                
+[ 129]    0150: 73 61 79 61 63 20 20 20 2D 20 6B 6C   db "sayac   - klavye ile girilen tu",159,"u sayar", 0Dh,0Ah
+                61 76 79 65 20 69 6C 65 20 67 69 72 
+                69 6C 65 6E 20 74 75 9F 75 20 73 61 
+                79 61 72 0D 0A                      
+[ 130]    0179: 6E 61 6D 65 20 2D 20 69 73 69 6D 20   db "name - isim yazd",141,"rma", 0Dh,0Ah
+                79 61 7A 64 8D 72 6D 61 0D 0A       
+[ 131]    018F: 44 61 68 61 20 66 61 7A 6C 61 73 8D   db "Daha fazlas",141," i",135,"in beklemede kal",141,"n!", 0Dh,0Ah, 0
+                20 69 87 69 6E 20 62 65 6B 6C 65 6D 
+                65 64 65 20 6B 61 6C 8D 6E 21 0D 0A 
+                00                                  
+[ 132]        :                                       
+[ 133]        :                                       
+[ 134]    01B4: 48 61 7A 8D 72 6C 61 79 61 6E 6C 61   pre1_msg db "Haz",141,"rlayanlar" , 0Dh , 0Ah , 0
+                72 0D 0A 00                         
+[ 135]        :                                       
+[ 136]    01C4: 43 61 6E 73 75 20 59 69 A7 69 74 0D   pre2_msg db "Cansu Yi",167,"it" , 0Dh , 0Ah , 0
+                0A 00                               
+[ 137]        :                                       
+[ 138]    01D2: 43 65 6E 61 20 4E 65 9F 65 76 61 74   pre3_msg db "Cena Ne",159,"evati", 0Dh , 0Ah , 0
+                69 0D 0A 00                         
+[ 139]        :                                       
+[ 140]        :                                       
+[ 141]    01E2: 42 69 6C 69 6E 6D 65 79 65 6E 20 6B   unknown  db "Bilinmeyen komut: " , 0
+                6F 6D 75 74 3A 20 00                
+[ 142]        :                                       
+[ 143]        :                                       ;======================================
+[ 144]        :                                       
+[ 145]    01F5:                                       start:
+[ 146]        :                                       
+[ 147]        :                                       ; data segment'i ayarlar:
+[ 148]    01F5: 0E                                    push    cs
+[ 149]    01F6: 1F                                    pop     ds
+[ 150]        :                                       
+[ 151]        :                                       ; varsayilan video modunu 80x25 olarak ayarla:
+[ 152]    01F7: B4 00                                 mov     ah, 00h
+[ 153]    01F9: B0 03                                 mov     al, 03h
+[ 154]    01FB: CD 10                                 int     10h
+[ 155]        :                                       
+[ 156]        :                                       ; dos/bios ile uyumluluk icin yanip sonme devre disi birakildi,
+[ 157]        :                                       ; emulator ve Windows istemi asla yanip sonmez.
+[ 158]    01FD: B8 03 10                              mov     ax, 1003h
+[ 159]    0200: BB 00 00                              mov     bx, 0      ; yanip sonmeyi devre disi.
+[ 160]    0203: CD 10                                 int     10h
+[ 161]        :                                       
+[ 162]        :                                       
+[ 163]        :                                       ; *** butunluk kontrolu ***
+[ 164]    0205: 80 3E 00 00 E9                        cmp [0000], 0E9h
+[ 165]    020A: 74 1B                                 jz integrity_check_ok
+[ 166]    020C:                                       integrity_failed:
+[ 167]    020C: B0 46                                 mov     al, 'F'
+[ 168]    020E: B4 0E                                 mov     ah, 0eh
+[ 169]    0210: CD 10                                 int     10h
+[ 170]        :                                       
+[ 171]        :                                       ; herhangi bir anahtari bekle
+[ 172]    0212: B8 00 00                              mov     ax, 0
+[ 173]    0215: CD 16                                 int     16h
+[ 174]        :                                       
+[ 175]        :                                       ; yeniden baslat
+[ 176]    0217: B8 40 00                              mov     ax, 0040h
+[ 177]    021A: 8E D8                                 mov     ds, ax
+[ 178]    021C: C7 06 72 00 00 00                     mov     w.[0072h], 0000h
+[ 179]    0222: EA 00 00 FF FF                        jmp	0ffffh:0000h	
+[ 180]    0227:                                       integrity_check_ok:
+[ 181]    0227: 90                                    nop
+[ 182]        :                                       ; *** ok ***
+[ 183]        :                                       
+[ 184]        :                                       
+[ 185]        :                                       
+[ 186]        :                                       ; ekrani temizle:
+[ 187]    0228: E8 22 02                              call    clear_screen
+[ 188]        :                                       
+[ 189]        :                                       
+[ 190]        :                                       ; mesaji yazdir :
+[ 191]    022B: BE 03 00                              lea     si, msg
+[ 192]    022E: E8 0A 02                              call    print_string
+[ 193]        :                                       
+[ 194]        :                                       
+[ 195]    0231:                                       eternal_loop:
+[ 196]    0231: E8 05 00                              call    get_command
+[ 197]        :                                       
+[ 198]    0234: E8 41 00                              call    process_cmd
+[ 199]        :                                       
+[ 200]        :                                       ; sonsuz dongu:
+[ 201]    0237: EB F8                                 jmp eternal_loop
+[ 202]        :                                       
+[ 203]        :                                       
+[ 204]        :                                       ;===========================================
+[ 205]    0239:                                       get_command proc near
+[ 206]        :                                       
+[ 207]        :                                       ;ekranin imlec konumunu asagi ayarlar:
+[ 208]    0239: B8 40 00                              mov     ax, 40h
+[ 209]    023C: 8E C0                                 mov     es, ax
+[ 210]    023E: 26 A0 84 00                           mov     al, es:[84h]
+[ 211]        :                                       
+[ 212]    0242: 50 53 52 B4 02 8A F0 B2 00 B7 00 CD   gotoxy  0, al
+                10 5A 5B 58                         
+[ 213]        :                                       
+[ 214]        :                                       ; komut satirini temizle:
+[ 215]    0252: BE 28 00                              lea     si, clean_str
+[ 216]    0255: E8 E3 01                              call    print_string
+[ 217]        :                                       
+[ 218]    0258: 50 53 52 B4 02 8A F0 B2 00 B7 00 CD   gotoxy  0, al
+                10 5A 5B 58                         
+[ 219]        :                                       
+[ 220]        :                                       ; istemi goster:
+[ 221]    0268: BE 33 00                              lea     si, prompt
+[ 222]    026B: E8 CD 01                              call    print_string
+[ 223]        :                                       
+[ 224]        :                                       
+[ 225]        :                                       ; bir komut icin bekle:
+[ 226]    026E: BA 0A 00                              mov     dx, cmd_size    ;buffer boyutu
+[ 227]    0271: BF 1E 00                              lea     di, command_buffer
+[ 228]    0274: E8 77 01                              call    get_string
+[ 229]        :                                       
+[ 230]        :                                       
+[ 231]    0277: C3                                    ret
+[ 232]        :                                       get_command endp
+[ 233]        :                                       ;===========================================
+[ 234]        :                                       
+[ 235]    0278:                                       process_cmd proc    near
+[ 236]        :                                       
+[ 237]        :                                       ;//// komut kontrolu ///
+[ 238]        :                                       ; set es to ds
+[ 239]    0278: 1E                                    push    ds
+[ 240]    0279: 07                                    pop     es
+[ 241]        :                                       
+[ 242]    027A: FC                                    cld     ; ileri karsilastirma.
+[ 243]        :                                       
+[ 244]        :                                       ; komut buffer'ini help ile karsilastir
+[ 245]    027B: BE 1E 00                              lea     si, command_buffer
+[ 246]    027E: B9 05 00                              mov     cx, chelp_tail - offset chelp   ; ['help',0] dizesinin boyutu.
+[ 247]    0281: BF 35 00                              lea     di, chelp
+[ 248]    0284: F3 A6                                 repe    cmpsb
+[ 249]    0286: 75 03 E9 AE 00                        je      help_command
+[ 250]        :                                       
+[ 251]        :                                       ; komut buffer'ini 'cls' ile karsilastirin
+[ 252]    028B: BE 1E 00                              lea     si, command_buffer
+[ 253]    028E: B9 04 00                              mov     cx, ccls_tail - offset ccls  ; ['cls',0] dizesinin boyutu.
+[ 254]    0291: BF 3A 00                              lea     di, ccls
+[ 255]    0294: F3 A6                                 repe    cmpsb
+[ 256]    0296: 75 03                                 jne     not_cls
+[ 257]    0298: E9 CB 00                              jmp     cls_command
+[ 258]    029B:                                       not_cls:
+[ 259]        :                                       
+[ 260]        :                                       ; komut buffer'ini 'quit' ile karsilastirin
+[ 261]    029B: BE 1E 00                              lea     si, command_buffer
+[ 262]    029E: B9 05 00                              mov     cx, cquit_tail - offset cquit ; ['quit',0] dizesinin boyutu.
+[ 263]    02A1: BF 3E 00                              lea     di, cquit
+[ 264]    02A4: F3 A6                                 repe    cmpsb
+[ 265]    02A6: 75 03 E9 C0 00                        je      reboot_command
+[ 266]        :                                       
+[ 267]        :                                       ; komut buffer'ini 'exit' ile karsilastirin
+[ 268]    02AB: BE 1E 00                              lea     si, command_buffer
+[ 269]    02AE: B9 05 00                              mov     cx, cexit_tail - offset cexit ; ['exit',0] dizesinin boyutu.
+[ 270]    02B1: BF 43 00                              lea     di, cexit
+[ 271]    02B4: F3 A6                                 repe    cmpsb
+[ 272]    02B6: 75 03 E9 B0 00                        je      reboot_command
+[ 273]        :                                       
+[ 274]        :                                       ; komut buffer'ini 'reboot' ile karsilastirin
+[ 275]    02BB: BE 1E 00                              lea     si, command_buffer
+[ 276]    02BE: B9 07 00                              mov     cx, creboot_tail - offset creboot  ; ['reboot',0]dizesinin boyutu.
+[ 277]    02C1: BF 48 00                              lea     di, creboot
+[ 278]    02C4: F3 A6                                 repe    cmpsb
+[ 279]    02C6: 75 03 E9 A0 00                        je      reboot_command
+[ 280]        :                                       
+[ 281]        :                                       ; komut buffer'ini 'factorial' ile karsilastirin
+[ 282]    02CB: BE 1E 00                              lea     si, command_buffer
+[ 283]    02CE: B9 0A 00                              mov     cx, cfactorial_tail - offset cfactorial  ; ['factorial',0] dizesinin boyutu.
+[ 284]    02D1: BF 4F 00                              lea     di, cfactorial
+[ 285]    02D4: F3 A6                                 repe    cmpsb
+[ 286]    02D6: 75 03 E9 A4 01                        je      factorial_command
+[ 287]        :                                       
+[ 288]        :                                       ; komut buffer'ini 'sayac' ile karsilastirin
+[ 289]    02DB: BE 1E 00                              lea     si, command_buffer
+[ 290]    02DE: B9 06 00                              mov     cx, csayac_tail - offset csayac  ; ['sayac',0] dizesinin boyutu.
+[ 291]    02E1: BF 59 00                              lea     di, csayac
+[ 292]    02E4: F3 A6                                 repe    cmpsb
+[ 293]    02E6: 75 03 E9 A4 03                        je      sayac_command
+[ 294]        :                                       
+[ 295]        :                                       ; komut buffer'ini 'name' ile karsilastirin
+[ 296]    02EB: BE 1E 00                              lea     si, command_buffer
+[ 297]    02EE: B9 05 00                              mov     cx, cprepared_tail - offset cprepared  ; ['isim yazdirma',0] dizesinin boyutu.
+[ 298]    02F1: BF 5F 00                              lea     di, cprepared
+[ 299]    02F4: F3 A6                                 repe    cmpsb
+[ 300]    02F6: 75 03 E9 61 04                        je      prepared_command
+[ 301]        :                                       
+[ 302]        :                                       
+[ 303]        :                                       
+[ 304]        :                                       ; bos satirlari gormezden gel
+[ 305]    02FB: 80 3E 1E 00 00                        cmp     command_buffer, 0
+[ 306]    0300: 75 03 E9 C8 00                        jz      processed
+[ 307]        :                                       
+[ 308]        :                                       
+[ 309]        :                                       ;////////////////////////////
+[ 310]        :                                       
+[ 311]    0305: B0 01                                 mov     al, 1
+[ 312]    0307: E8 C4 00                              call    scroll_t_area
+[ 313]        :                                       
+[ 314]        :                                       ;sadece imlec konumunu ayarla
+[ 315]        :                                       ; islem satirinin ustunde:
+[ 316]    030A: B8 40 00                              mov     ax, 40h
+[ 317]    030D: 8E C0                                 mov     es, ax
+[ 318]    030F: 26 A0 84 00                           mov     al, es:[84h]
+[ 319]    0313: FE C8                                 dec     al
+[ 320]    0315: 50 53 52 B4 02 8A F0 B2 00 B7 00 CD   gotoxy  0, al
+                10 5A 5B 58                         
+[ 321]        :                                       
+[ 322]    0325: BE E2 01                              lea     si, unknown
+[ 323]    0328: E8 10 01                              call    print_string
+[ 324]        :                                       
+[ 325]    032B: BE 1E 00                              lea     si, command_buffer
+[ 326]    032E: E8 0A 01                              call    print_string
+[ 327]        :                                       
+[ 328]    0331: B0 01                                 mov     al, 1
+[ 329]    0333: E8 98 00                              call    scroll_t_area
+[ 330]        :                                       
+[ 331]    0336: E9 94 00                              jmp     processed
+[ 332]        :                                       
+[ 333]        :                                       ; +++++ 'help' komutu ++++++
+[ 334]    0339:                                       help_command:
+[ 335]        :                                       
+[ 336]        :                                       ; metin alanini 9 satir yukari kaydir:
+[ 337]    0339: B0 09                                 mov     al, 9
+[ 338]    033B: E8 90 00                              call    scroll_t_area
+[ 339]        :                                       
+[ 340]        :                                       ; imlec konumunu 9 satira ayarla
+[ 341]        :                                       ; islem satirinin ustunde:
+[ 342]    033E: B8 40 00                              mov     ax, 40h
+[ 343]    0341: 8E C0                                 mov     es, ax
+[ 344]    0343: 26 A0 84 00                           mov     al, es:[84h]
+[ 345]    0347: 2C 0B                                 sub     al, 11
+[ 346]    0349: 50 53 52 B4 02 8A F0 B2 00 B7 00 CD   gotoxy  0, al
+                10 5A 5B 58                         
+[ 347]        :                                       
+[ 348]    0359: BE 64 00                              lea     si, help_msg
+[ 349]    035C: E8 DC 00                              call    print_string
+[ 350]        :                                       
+[ 351]    035F: B0 01                                 mov     al, 1
+[ 352]    0361: E8 6A 00                              call    scroll_t_area
+[ 353]        :                                       
+[ 354]    0364: EB 67                                 jmp     processed
+[ 355]        :                                       
+[ 356]        :                                       
+[ 357]        :                                       
+[ 358]        :                                       
+[ 359]        :                                       ; +++++ 'cls' komutu ++++++
+[ 360]    0366:                                       cls_command:
+[ 361]    0366: E8 E4 00                              call    clear_screen
+[ 362]    0369: EB 62                                 jmp     processed
+[ 363]        :                                       
+[ 364]        :                                       
+[ 365]        :                                       
+[ 366]        :                                       
+[ 367]        :                                       
+[ 368]        :                                       
+[ 369]        :                                       
+[ 370]        :                                       ; +++ 'quit', 'cikis', 'yeniden baslatma' +++
+[ 371]    036B:                                       reboot_command:
+[ 372]    036B: E8 DF 00                              call    clear_screen
+[ 373]    036E: 60 8C CA 8E C2 B4 13 B0 01 B7 00 B3   print 5,2,0011_1111b," L",154,"tfen t",154,"m diskleri ",135,"",141,"kar",141,"n "
+                3F B9 02 00 B2 05 B6 02 BD 8A 03 CD 
+                10 61 EB 03 20 4C 00                
+[ 374]    038D: 60 8C CA 8E C2 B4 13 B0 01 B7 00 B3   print 5,3,0011_1111b," ve yeniden ba",159,"latmak i",135,"in herhangi bir tu",159,"a bas",141,"n... "
+                3F B9 0E 00 B2 05 B6 03 BD A9 03 CD 
+                10 61 EB 0F 20 76 65 20 79 65 6E 69 
+                64 65 6E 20 62 61 00                
+[ 375]    03B8: B8 00 00                              mov ax, 0  ; herhangi bir anahtari bekle....
+[ 376]    03BB: CD 16                                 int 16h
+[ 377]        :                                       
+[ 378]        :                                       ; sihirli degeri 0040h:0072h'de saklayin:
+[ 379]        :                                       ;   0000h - soguk baslatma.
+[ 380]        :                                       ;   1234h - sicak baslatma.
+[ 381]    03BD: B8 40 00                              mov     ax, 0040h
+[ 382]    03C0: 8E D8                                 mov     ds, ax
+[ 383]    03C2: C7 06 72 00 00 00                     mov     w.[0072h], 0000h
+[ 384]    03C8: EA 00 00 FF FF                        jmp	0ffffh:0000h	
+[ 385]        :                                       
+[ 386]        :                                       ; ++++++++++++++++++++++++++
+[ 387]        :                                       
+[ 388]    03CD:                                       processed:
+[ 389]    03CD: C3                                    ret
+[ 390]        :                                       process_cmd endp
+[ 391]        :                                       
+[ 392]        :                                       ;===========================================
+[ 393]        :                                       
+[ 394]        :                                       ; son satir disindaki tum ekrani kaydir
+[ 395]        :                                       ; al'de belirtilen degere kadar
+[ 396]        :                                       
+[ 397]    03CE:                                       scroll_t_area   proc    near
+[ 398]        :                                       
+[ 399]    03CE: BA 40 00                              mov dx, 40h
+[ 400]    03D1: 8E C2                                 mov es, dx  ; ekran parametreleri almak icin.
+[ 401]    03D3: B4 06                                 mov ah, 06h ; islev kimligini yukari kaydirin.
+[ 402]    03D5: B7 07                                 mov bh, 07  ; yeni satirlarin ozelligi.
+[ 403]    03D7: B5 00                                 mov ch, 0   ; ust sira.
+[ 404]    03D9: B1 00                                 mov cl, 0   ; ust satir.
+[ 405]    03DB: BF 84 00                              mov di, 84h ; -1 ekraninda,
+[ 406]    03DE: 26 8A 35                              mov dh, es:[di] ; alt satir (byte).
+[ 407]    03E1: FE CE                                 dec dh  ; alt satiri kaydirmayin.
+[ 408]    03E3: BF 4A 00                              mov di, 4ah ; ekrandaki sutunlar,
+[ 409]    03E6: 26 8A 15                              mov dl, es:[di]
+[ 410]    03E9: FE CA                                 dec dl  ; alt sutun.
+[ 411]    03EB: CD 10                                 int 10h
+[ 412]        :                                       
+[ 413]    03ED: C3                                    ret
+[ 414]        :                                       scroll_t_area   endp
+[ 415]        :                                       
+[ 416]        :                                       ;===========================================
+[ 417]        :                                       
+[ 418]        :                                       
+[ 419]        :                                       
+[ 420]        :                                       
+[ 421]        :                                       ; klavyeden karakterleri alin ve bos sonlandirilmis bir dize yazin
+[ 422]        :                                       ; DS:DI'de arabellege almak icin maksimum arabellek boyutu DX'tir.
+[ 423]        :                                       ; 'enter' girisi durdurur.
+[ 424]    03EE:                                       get_string      proc    near
+[ 425]    03EE: 50                                    push    ax
+[ 426]    03EF: 51                                    push    cx
+[ 427]    03F0: 57                                    push    di
+[ 428]    03F1: 52                                    push    dx
+[ 429]        :                                       
+[ 430]    03F2: B9 00 00                              mov     cx, 0                   ; char sayaci.
+[ 431]        :                                       
+[ 432]    03F5: 83 FA 01                              cmp     dx, 1                   ; buffer cok mu kucuk?
+[ 433]    03F8: 76 3C                                 jbe     empty_buffer            ;
+[ 434]        :                                       
+[ 435]    03FA: 4A                                    dec     dx                      ; son sifir icin yer ayir.
+[ 436]        :                                       
+[ 437]        :                                       
+[ 438]        :                                       ;============================
+[ 439]        :                                       ; elde edilecek sonsuz dongu
+[ 440]        :                                       ; ve tus vuruslari isler:
+[ 441]        :                                       
+[ 442]    03FB:                                       wait_for_key:
+[ 443]        :                                       
+[ 444]    03FB: B4 00                                 mov     ah, 0                   ; tusuna basildi.
+[ 445]    03FD: CD 16                                 int     16h
+[ 446]        :                                       
+[ 447]    03FF: 3C 0D                                 cmp     al, 0Dh                 ; 'return'e basildi mi?
+[ 448]    0401: 74 30                                 jz      exit
+[ 449]        :                                       
+[ 450]        :                                       
+[ 451]    0403: 3C 08                                 cmp     al, 8                   ; 'backspace' basildi mi?
+[ 452]    0405: 75 1E                                 jne     add_to_buffer
+[ 453]    0407: E3 F2                                 jcxz    wait_for_key            ; kaldirilacak bir sey yok!
+[ 454]    0409: 49                                    dec     cx
+[ 455]    040A: 4F                                    dec     di
+[ 456]    040B: 50 B0 08 B4 0E CD 10 58               putc    8                       ; geri al
+[ 457]    0413: 50 B0 20 B4 0E CD 10 58               putc    ' '                     ; net konum
+[ 458]    041B: 50 B0 08 B4 0E CD 10 58               putc    8                       ; tekrar geri al
+[ 459]    0423: EB D6                                 jmp     wait_for_key
+[ 460]        :                                       
+[ 461]    0425:                                       add_to_buffer:
+[ 462]        :                                       
+[ 463]    0425: 3B CA                                 cmp     cx, dx          ; buffer dolu mu?
+[ 464]    0427: 73 D2                                 jae     wait_for_key    ; oyleyse 'return' neya'backspace' bekleyin...
+[ 465]        :                                       
+[ 466]    0429: 88 05                                 mov     [di], al
+[ 467]    042B: 47                                    inc     di
+[ 468]    042C: 41                                    inc     cx
+[ 469]        :                                       
+[ 470]        :                                       ; anahtari yazdir:
+[ 471]    042D: B4 0E                                 mov     ah, 0eh
+[ 472]    042F: CD 10                                 int     10h
+[ 473]        :                                       
+[ 474]    0431: EB C8                                 jmp     wait_for_key
+[ 475]        :                                       ;============================
+[ 476]        :                                       
+[ 477]    0433:                                       exit:
+[ 478]        :                                       
+[ 479]        :                                       ; null ile sonladir:
+[ 480]    0433: C6 05 00                              mov     [di], 0
+[ 481]        :                                       
+[ 482]    0436:                                       empty_buffer:
+[ 483]        :                                       
+[ 484]    0436: 5A                                    pop     dx
+[ 485]    0437: 5F                                    pop     di
+[ 486]    0438: 59                                    pop     cx
+[ 487]    0439: 58                                    pop     ax
+[ 488]    043A: C3                                    ret
+[ 489]        :                                       get_string      endp
+[ 490]        :                                       
+[ 491]        :                                       
+[ 492]        :                                       
+[ 493]        :                                       
+[ 494]        :                                       ; gecerli imlecçkonumunda bos sonlandirilmis bir dize yazdirin,
+[ 495]        :                                       ; dize adresi: ds:si
+[ 496]    043B:                                       print_string proc near
+[ 497]    043B: 50                                    push    ax      ; bellek registers...
+[ 498]    043C: 56                                    push    si      ;
+[ 499]        :                                       
+[ 500]    043D:                                       next_char:
+[ 501]    043D: 8A 04                                 mov     al, [si]
+[ 502]    043F: 3C 00                                 cmp     al, 0
+[ 503]    0441: 74 07                                 jz      printed
+[ 504]    0443: 46                                    inc     si
+[ 505]    0444: B4 0E                                 mov     ah, 0eh ; teletip fonksiyon.
+[ 506]    0446: CD 10                                 int     10h
+[ 507]    0448: EB F3                                 jmp     next_char
+[ 508]    044A:                                       printed:
+[ 509]        :                                       
+[ 510]    044A: 5E                                    pop     si      ; kayitlari yeniden sakla...
+[ 511]    044B: 58                                    pop     ax      ;
+[ 512]        :                                       
+[ 513]    044C: C3                                    ret
+[ 514]        :                                       print_string endp
+[ 515]        :                                       
+[ 516]        :                                       
+[ 517]        :                                       
+[ 518]        :                                       ; tum ekran penceresini kaydirarak ekrani temizleyin,
+[ 519]        :                                       ; ve imlec konumunu en uste ayarlayin.
+[ 520]        :                                       ; varsayilan ozellik mavi uzerine beyaz olarak ayarlanmistir
+[ 521]    044D:                                       clear_screen proc near
+[ 522]    044D: 50                                    push    ax      ; bellek registers...
+[ 523]    044E: 1E                                    push    ds      ;
+[ 524]    044F: 53                                    push    bx      ;
+[ 525]    0450: 51                                    push    cx      ;
+[ 526]    0451: 57                                    push    di      ;
+[ 527]        :                                       
+[ 528]    0452: B8 40 00                              mov     ax, 40h
+[ 529]    0455: 8E D8                                 mov     ds, ax  ; ekran parametreleri almak icin
+[ 530]    0457: B4 06                                 mov     ah, 06h ; islev kimligini yukari kaydirin.
+[ 531]    0459: B0 00                                 mov     al, 0   ; yeni satirlarin ozelligi.
+[ 532]    045B: B7 0F                                 mov     bh, 0000_1111b  ; attribute for new lines.
+[ 533]    045D: B5 00                                 mov     ch, 0   ; ust sira.
+[ 534]    045F: B1 00                                 mov     cl, 0   ; ust satir.
+[ 535]    0461: BF 84 00                              mov     di, 84h ; -1 ekraninda,
+[ 536]    0464: 8A 35                                 mov     dh, [di] ; alt satir (byte).
+[ 537]    0466: BF 4A 00                              mov     di, 4ah ; alt satiri kaydirmayin.
+[ 538]    0469: 8A 15                                 mov     dl, [di]
+[ 539]    046B: FE CA                                 dec     dl      ; alt sutun.
+[ 540]    046D: CD 10                                 int     10h
+[ 541]        :                                       
+[ 542]        :                                       ;ekranin imlec konumunu yukari ayarlar:
+[ 543]    046F: B7 00                                 mov     bh, 0   ; gecerli  sayfa.
+[ 544]    0471: B2 00                                 mov     dl, 0   ; sutun.
+[ 545]    0473: B6 00                                 mov     dh, 0   ; satir.
+[ 546]    0475: B4 02                                 mov     ah, 02
+[ 547]    0477: CD 10                                 int     10h
+[ 548]        :                                       
+[ 549]    0479: 5F                                    pop     di      ; kaydi yeniden sakla...
+[ 550]    047A: 59                                    pop     cx      ;
+[ 551]    047B: 5B                                    pop     bx      ;
+[ 552]    047C: 1F                                    pop     ds      ;
+[ 553]    047D: 58                                    pop     ax      ;
+[ 554]        :                                       
+[ 555]    047E: C3                                    ret
+[ 556]        :                                       clear_screen endp
+[ 557]        :                                       
+[ 558]        :                                       
+[ 559]        :                                       
+[ 560]    047F:                                       factorial_command:
+[ 561]    047F: E8 CB FF                              call clear_screen
+[ 562]        :                                       
+[ 563]        :                                       ; bu ornek kullanicidan numarayi alir,
+[ 564]        :                                       ; ve bunun icin faktoriyelini hesaplar.
+[ 565]        :                                       ; 0'dan 8'e kadar desteklenen giris!
+[ 566]        :                                       
+[ 567]        :                                       
+[ 568]        :                                       
+[ 569]        :                                       ; bu makro AL'de bir karakter yazdirir ve ilerler
+[ 570]        :                                       ; gecerli imlec konumu:
+[ 571]        :                                       puts    macro   char
+[ 572]        :                                       push    ax
+[ 573]        :                                       mov     al, char
+[ 574]        :                                       mov     ah, 0eh
+[ 575]        :                                       int     10h
+[ 576]        :                                       pop     ax
+[ 577]        :                                       endm
+[ 578]        :                                       
+[ 579]        :                                       
+[ 580]        :                                       
+[ 581]        :                                       
+[ 582]        :                                       
+[ 583]    0482: EB 02                                 jmp basla
+[ 584]        :                                       
+[ 585]        :                                       
+[ 586]    0484: 00 00                                 result dw ?
+[ 587]        :                                       
+[ 588]        :                                       
+[ 589]        :                                       
+[ 590]    0486:                                       basla:
+[ 591]        :                                       
+[ 592]        :                                       ; ilk sayiyi al:
+[ 593]        :                                       
+[ 594]    0486: B0 01                                 	mov al, 1
+[ 595]    0488: B7 00                                 	mov bh, 0
+[ 596]    048A: B3 0B                                 	mov bl, 0000_1011b
+[ 597]    048C: B9 12 00                              	mov cx, msg1end - offset msg1 ; mesaj boyutunu hesapla.
+[ 598]    048F: B2 00                                 	mov dl, 0
+[ 599]    0491: B6 00                                 	mov dh, 0
+[ 600]    0493: 0E                                    	push cs
+[ 601]    0494: 07                                    	pop es
+[ 602]    0495: BD 9E 04                              	mov bp, offset msg1
+[ 603]    0498: B4 13                                 	mov ah, 13h
+[ 604]    049A: CD 10                                 	int 10h
+[ 605]    049C: EB 12                                 jmp n1
+[ 606]    049E: 0D 0A 53 61 79 8D 79 8D 20 67 69 72   msg1 db 0Dh,0Ah, 'Say',141,'y',141,' giriniz: '
+                69 6E 69 7A 3A 20                   
+[ 607]    04B0:                                       msg1end:
+[ 608]    04B0:                                       n1:
+[ 609]        :                                       
+[ 610]    04B0: E8 A5 00                              call    scan_num
+[ 611]        :                                       
+[ 612]        :                                       
+[ 613]        :                                       ; 0! = 1:
+[ 614]    04B3: B8 01 00                              mov     ax, 1
+[ 615]    04B6: 83 F9 00                              cmp     cx, 0
+[ 616]    04B9: 74 15                                 je      print_result
+[ 617]        :                                       
+[ 618]        :                                       ; sayiyi bx' tasiyin:
+[ 619]        :                                       ; cx sayac olacaktir:
+[ 620]        :                                       
+[ 621]    04BB: 8B D9                                 mov     bx, cx
+[ 622]        :                                       
+[ 623]    04BD: B8 01 00                              mov     ax, 1
+[ 624]    04C0: BB 01 00                              mov     bx, 1
+[ 625]        :                                       
+[ 626]    04C3:                                       calc_it:
+[ 627]    04C3: F7 E3                                 mul     bx
+[ 628]    04C5: 83 FA 00                              cmp     dx, 0
+[ 629]    04C8: 75 34                                 jne     overflow
+[ 630]    04CA: 43                                    inc     bx
+[ 631]    04CB: E2 F6                                 loop    calc_it
+[ 632]        :                                       
+[ 633]    04CD: A3 84 04                              mov result, ax
+[ 634]        :                                       
+[ 635]        :                                       
+[ 636]    04D0:                                       print_result:
+[ 637]        :                                       
+[ 638]        :                                       ; sonucu ax'de yazdir:
+[ 639]    04D0: B0 01                                 	mov al, 1
+[ 640]    04D2: B7 00                                 	mov bh, 0
+[ 641]    04D4: B3 0B                                 	mov bl, 0000_1011b
+[ 642]    04D6: B9 0E 00                              	mov cx, msg2end - offset msg2 ; mesaj boyutunu hesapla.
+[ 643]    04D9: B2 02                                 	mov dl, 2
+[ 644]    04DB: B6 02                                 	mov dh, 2
+[ 645]    04DD: 0E                                    	push cs
+[ 646]    04DE: 07                                    	pop es
+[ 647]    04DF: BD E8 04                              	mov bp, offset msg2
+[ 648]    04E2: B4 13                                 	mov ah, 13h
+[ 649]    04E4: CD 10                                 	int 10h
+[ 650]    04E6: EB 0E                                 jmp n2
+[ 651]    04E8: 0D 0A 66 61 6B 74 94 72 69 79 65 6C   msg2 db 0Dh,0Ah, 'fakt',148,'riyel: '
+                3A 20                               
+[ 652]    04F6:                                       msg2end:
+[ 653]    04F6:                                       n2:
+[ 654]        :                                       
+[ 655]        :                                       
+[ 656]    04F6: A1 84 04                              mov     ax, result
+[ 657]    04F9: E8 43 01                              call    print_num_uns
+[ 658]    04FC: EB 55                                 jmp     exitf
+[ 659]        :                                       
+[ 660]        :                                       
+[ 661]    04FE:                                       overflow:
+[ 662]    04FE: B0 01                                 	mov al, 1
+[ 663]    0500: B7 00                                 	mov bh, 0
+[ 664]    0502: B3 0B                                 	mov bl, 0000_1011b
+[ 665]    0504: B9 3A 00                              	mov cx, msg3end - offset msg3 ; mesaj boyutunu hesapla.
+[ 666]    0507: B2 02                                 	mov dl, 2
+[ 667]    0509: B6 02                                 	mov dh, 2
+[ 668]    050B: 0E                                    	push cs
+[ 669]    050C: 07                                    	pop es
+[ 670]    050D: BD 16 05                              	mov bp, offset msg3
+[ 671]    0510: B4 13                                 	mov ah, 13h
+[ 672]    0512: CD 10                                 	int 10h
+[ 673]    0514: EB 3A                                 jmp n3
+[ 674]    0516: 0D 0A 73 6F 6E 75 87 20 87 6F 6B 20   msg3 db 0Dh,0Ah, 'sonu',135,' ',135,'ok b',154,'y',154,'k!', 0Dh,0Ah, '0 ile 8 aras',141,'ndaki de',167,'erleri kullan',141,'n.'
+                62 9A 79 9A 6B 21 0D 0A 30 20 69 6C 
+                65 20 38 20 61 72 61 73 8D 6E 64 61 
+                6B 69 20 64 65 A7 65 72 6C 65 72 69 
+                20 6B 75 6C 6C 61 6E 8D 6E 2E       
+[ 675]    0550:                                       msg3end:
+[ 676]    0550:                                       n3:
+[ 677]    0550: E9 A2 FC                              jmp   start
+[ 678]        :                                       
+[ 679]    0553:                                       exitf:
+[ 680]        :                                       
+[ 681]        :                                       ;herhangi bir tusa basilmasini bekleyin:
+[ 682]    0553: B4 00                                 mov ah, 0
+[ 683]    0555: CD 16                                 int 16h
+[ 684]        :                                       
+[ 685]    0557: C3                                    ret
+[ 686]        :                                       
+[ 687]        :                                       
+[ 688]        :                                       
+[ 689]        :                                       
+[ 690]        :                                       
+[ 691]        :                                       
+[ 692]        :                                       
+[ 693]        :                                       
+[ 694]        :                                       ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+[ 695]        :                                       ;;; these functions are copied from emu8086.inc ;;;
+[ 696]        :                                       ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+[ 697]        :                                       
+[ 698]        :                                       
+[ 699]        :                                       ; klavyeden cok basamakli girilmis sayiyi alir,
+[ 700]        :                                       ; ve sonucu cx register'ýnda saklar:
+[ 701]    0558:                                       SCAN_NUM        PROC    NEAR
+[ 702]    0558: 52                                    PUSH    DX
+[ 703]    0559: 50                                    PUSH    AX
+[ 704]    055A: 56                                    PUSH    SI
+[ 705]        :                                       
+[ 706]    055B: B9 00 00                              MOV     CX, 0
+[ 707]        :                                       
+[ 708]        :                                       ; bayragi sifirla:
+[ 709]    055E: 2E C6 06 18 06 00                     MOV     CS:make_minus, 0
+[ 710]        :                                       
+[ 711]    0564:                                       next_digit:
+[ 712]        :                                       
+[ 713]        :                                       ; klavyeden karakter al
+[ 714]        :                                       ; AL'ye:
+[ 715]    0564: B4 00                                 MOV     AH, 00h
+[ 716]    0566: CD 16                                 INT     16h
+[ 717]        :                                       ; ve yazdir:
+[ 718]    0568: B4 0E                                 MOV     AH, 0Eh
+[ 719]    056A: CD 10                                 INT     10h
+[ 720]        :                                       
+[ 721]        :                                       ; eksiyi kontrol et:
+[ 722]    056C: 3C 2D                                 CMP     AL, '-'
+[ 723]    056E: 74 69                                 JE      set_minus
+[ 724]        :                                       
+[ 725]        :                                       ; ENTER tusunu kontrol edin :
+[ 726]    0570: 3C 0D                                 CMP     AL, 0Dh  ; satirbasi?
+[ 727]    0572: 75 03                                 JNE     not_cr
+[ 728]    0574: E9 93 00                              JMP     stop_input
+[ 729]    0577:                                       not_cr:
+[ 730]        :                                       
+[ 731]        :                                       
+[ 732]    0577: 3C 08                                 CMP     AL, 8                   ; 'geri al'a basildi mi?
+[ 733]    0579: 75 1E                                 JNE     backspace_checked
+[ 734]    057B: BA 00 00                              MOV     DX, 0                   ; son rakami kaldir
+[ 735]    057E: 8B C1                                 MOV     AX, CX                  ; bolume gore:
+[ 736]    0580: 2E F7 36 8D 06                        DIV     CS:ten                  ; AX = DX:AX / 10 (DX-rem).
+[ 737]    0585: 8B C8                                 MOV     CX, AX
+[ 738]    0587: 50 B0 20 B4 0E CD 10 58               PUTs    ' '                     ; net pozisyon.
+[ 739]    058F: 50 B0 08 B4 0E CD 10 58               PUTs    8                       ; tekrar geri al.
+[ 740]    0597: EB CB                                 JMP     next_digit
+[ 741]    0599:                                       backspace_checked:
+[ 742]        :                                       
+[ 743]        :                                       
+[ 744]        :                                       ; yalnizca rakamlar izin ver:
+[ 745]    0599: 3C 30                                 CMP     AL, '0'
+[ 746]    059B: 73 02                                 JAE     ok_AE_0
+[ 747]    059D: EB 04                                 JMP     remove_not_digit
+[ 748]    059F:                                       ok_AE_0:
+[ 749]    059F: 3C 39                                 CMP     AL, '9'
+[ 750]    05A1: 76 1A                                 JBE     ok_digit
+[ 751]    05A3:                                       remove_not_digit:
+[ 752]    05A3: 50 B0 08 B4 0E CD 10 58               PUTs    8       ; geri al.
+[ 753]    05AB: 50 B0 20 B4 0E CD 10 58               PUTs    ' '     ;
+[ 754]    05B3: 50 B0 08 B4 0E CD 10 58               PUTs    8       ; tekrar geri al.
+[ 755]    05BB: EB A7                                 JMP     next_digit ; sonraki girisi bekle.
+[ 756]    05BD:                                       ok_digit:
+[ 757]        :                                       
+[ 758]        :                                       
+[ 759]    05BD: 50                                    PUSH    AX
+[ 760]    05BE: 8B C1                                 MOV     AX, CX
+[ 761]    05C0: 2E F7 26 8D 06                        MUL     CS:ten                  ; DX:AX = AX*10
+[ 762]    05C5: 8B C8                                 MOV     CX, AX
+[ 763]    05C7: 58                                    POP     AX
+[ 764]        :                                       
+[ 765]        :                                       ; sayinin buyuk olup olmadigini kontrol etme
+[ 766]    05C8: 83 FA 00                              CMP     DX, 0
+[ 767]    05CB: 75 19                                 JNE     too_big
+[ 768]        :                                       
+[ 769]        :                                       ; ASCII koduna donusturme:
+[ 770]    05CD: 2C 30                                 SUB     AL, 30h
+[ 771]        :                                       
+[ 772]        :                                       ; CX'e al ekle:
+[ 773]    05CF: B4 00                                 MOV     AH, 0
+[ 774]    05D1: 8B D1                                 MOV     DX, CX      ; sonuc cok buyukse yedekleme.
+[ 775]    05D3: 03 C8                                 ADD     CX, AX
+[ 776]    05D5: 72 0A                                 JC      too_big2    ; sayi cok buyukse atla.
+[ 777]        :                                       
+[ 778]    05D7: EB 8B                                 JMP     next_digit
+[ 779]        :                                       
+[ 780]    05D9:                                       set_minus:
+[ 781]    05D9: 2E C6 06 18 06 01                     MOV     CS:make_minus, 1
+[ 782]    05DF: EB 83                                 JMP     next_digit
+[ 783]        :                                       
+[ 784]    05E1:                                       too_big2:
+[ 785]    05E1: 8B CA                                 MOV     CX, DX      ; eklemeden once yedeklenen degeri geri yukle
+[ 786]    05E3: BA 00 00                              MOV     DX, 0       ; yedeklemeden once DX sifirdi!
+[ 787]    05E6:                                       too_big:
+[ 788]    05E6: 8B C1                                 MOV     AX, CX
+[ 789]    05E8: 2E F7 36 8D 06                        DIV     CS:ten  ;
+[ 790]    05ED: 8B C8                                 MOV     CX, AX
+[ 791]    05EF: 50 B0 08 B4 0E CD 10 58               PUTs    8       ; geri al.
+[ 792]    05F7: 50 B0 20 B4 0E CD 10 58               PUTs    ' '
+[ 793]    05FF: 50 B0 08 B4 0E CD 10 58               PUTs    8
+[ 794]    0607: E9 5A FF                              JMP     next_digit ; Enter/Backspace icin bekle.
+[ 795]        :                                       
+[ 796]        :                                       
+[ 797]    060A:                                       stop_input:
+[ 798]        :                                       ; kontrol flag:
+[ 799]    060A: 2E 80 3E 18 06 00                     CMP     CS:make_minus, 0
+[ 800]    0610: 74 02                                 JE      not_minus
+[ 801]    0612: F7 D9                                 NEG     CX
+[ 802]    0614:                                       not_minus:
+[ 803]        :                                       
+[ 804]    0614: 5E                                    POP     SI
+[ 805]    0615: 58                                    POP     AX
+[ 806]    0616: 5A                                    POP     DX
+[ 807]    0617: C3                                    RET
+[ 808]    0618: 00                                    make_minus      DB      ?       ; bir flag kullan.
+[ 809]        :                                       SCAN_NUM        ENDP
+[ 810]        :                                       
+[ 811]        :                                       
+[ 812]        :                                       
+[ 813]    0619:                                       PRINT_NUM       PROC    NEAR
+[ 814]    0619: 52                                    PUSH    DX
+[ 815]    061A: 50                                    PUSH    AX
+[ 816]        :                                       
+[ 817]    061B: 3D 00 00                              CMP     AX, 0
+[ 818]    061E: 75 0A                                 JNZ     not_zero
+[ 819]        :                                       
+[ 820]    0620: 50 B0 30 B4 0E CD 10 58               PUTs    '0'
+[ 821]    0628: EB 12                                 JMP     printedd
+[ 822]        :                                       
+[ 823]    062A:                                       not_zero:
+[ 824]        :                                       ; AX'in kontrol isareti,
+[ 825]        :                                       ; negatifse mutlak yapin:
+[ 826]    062A: 3D 00 00                              CMP     AX, 0
+[ 827]    062D: 79 0A                                 JNS     positive
+[ 828]    062F: F7 D8                                 NEG     AX
+[ 829]        :                                       
+[ 830]    0631: 50 B0 2D B4 0E CD 10 58               PUTs    '-'
+[ 831]        :                                       
+[ 832]    0639:                                       positive:
+[ 833]    0639: E8 03 00                              CALL    PRINT_NUM_UNS
+[ 834]    063C:                                       printedd:
+[ 835]    063C: 58                                    POP     AX
+[ 836]    063D: 5A                                    POP     DX
+[ 837]    063E: C3                                    RET
+[ 838]        :                                       PRINT_NUM       ENDP
+[ 839]        :                                       
+[ 840]        :                                       
+[ 841]        :                                       
+[ 842]    063F:                                       PRINT_NUM_UNS   PROC    NEAR
+[ 843]    063F: 50                                    PUSH    AX
+[ 844]    0640: 53                                    PUSH    BX
+[ 845]    0641: 51                                    PUSH    CX
+[ 846]    0642: 52                                    PUSH    DX
+[ 847]        :                                       
+[ 848]        :                                       ; sayidan once sifira basilmasini onlemek icin flag:
+[ 849]    0643: B9 01 00                              MOV     CX, 1
+[ 850]        :                                       
+[ 851]        :                                       
+[ 852]    0646: BB 10 27                              MOV     BX, 10000       ; 2710h - divider.
+[ 853]        :                                       
+[ 854]        :                                       ; AX sifir mi?
+[ 855]    0649: 3D 00 00                              CMP     AX, 0
+[ 856]    064C: 74 32                                 JZ      print_zero
+[ 857]        :                                       
+[ 858]    064E:                                       begin_print:
+[ 859]        :                                       
+[ 860]        :                                       ; bolucuyu kontrol edin (sifirsa end_print gidin):
+[ 861]    064E: 83 FB 00                              CMP     BX,0
+[ 862]    0651: 74 35                                 JZ      end_print
+[ 863]        :                                       
+[ 864]        :                                       ; sayidan once sifira basmaktan kacinin:
+[ 865]    0653: 83 F9 00                              CMP     CX, 0
+[ 866]    0656: 74 04                                 JE      calc
+[ 867]        :                                       ; if AX<BX ise DIV sonucu sifir olacaktir:
+[ 868]    0658: 3B C3                                 CMP     AX, BX
+[ 869]    065A: 72 14                                 JB      skip
+[ 870]    065C:                                       calc:
+[ 871]    065C: B9 00 00                              MOV     CX, 0
+[ 872]        :                                       
+[ 873]    065F: BA 00 00                              MOV     DX, 0
+[ 874]    0662: F7 F3                                 DIV     BX      ; AX = DX:AX / BX   (DX=remainder).
+[ 875]        :                                       
+[ 876]        :                                       ; son rakami yazdir:
+[ 877]    0664: 04 30                                 ADD     AL, 30h
+[ 878]    0666: 50 8A C0 B4 0E CD 10 58               PUTs    AL
+[ 879]        :                                       
+[ 880]        :                                       
+[ 881]    066E: 8B C2                                 MOV     AX, DX
+[ 882]        :                                       
+[ 883]    0670:                                       skip:
+[ 884]        :                                       ; hesapla BX=BX/10
+[ 885]    0670: 50                                    PUSH    AX
+[ 886]    0671: BA 00 00                              MOV     DX, 0
+[ 887]    0674: 8B C3                                 MOV     AX, BX
+[ 888]    0676: 2E F7 36 8D 06                        DIV     CS:ten  ; AX = DX:AX / 10   (DX=remainder).
+[ 889]    067B: 8B D8                                 MOV     BX, AX
+[ 890]    067D: 58                                    POP     AX
+[ 891]        :                                       
+[ 892]    067E: EB CE                                 JMP     begin_print
+[ 893]        :                                       
+[ 894]    0680:                                       print_zero:
+[ 895]    0680: 50 B0 30 B4 0E CD 10 58               PUTs    '0'
+[ 896]        :                                       
+[ 897]    0688:                                       end_print:
+[ 898]        :                                       
+[ 899]    0688: 5A                                    POP     DX
+[ 900]    0689: 59                                    POP     CX
+[ 901]    068A: 5B                                    POP     BX
+[ 902]    068B: 58                                    POP     AX
+[ 903]    068C: C3                                    RET
+[ 904]        :                                       PRINT_NUM_UNS   ENDP
+[ 905]        :                                       
+[ 906]        :                                       
+[ 907]        :                                       
+[ 908]    068D: 0A 00                                 ten             DW      10
+[ 909]        :                                       
+[ 910]        :                                       
+[ 911]        :                                       
+[ 912]        :                                       
+[ 913]    068F:                                       sayac_command:
+[ 914]    068F: E8 BB FD                              call clear_screen
+[ 915]        :                                       
+[ 916]        :                                       
+[ 917]        :                                       ; hosgeldin mesaji yazdir:
+[ 918]    0692: B0 01                                 	mov al, 1
+[ 919]    0694: B7 00                                 	mov bh, 0
+[ 920]    0696: B3 0B                                 	mov bl, 0000_1011b
+[ 921]    0698: B9 42 00                              	mov cx, msgaend - offset msga ; mesaj boyutunu hesapla.
+[ 922]    069B: B2 00                                 	mov dl, 0
+[ 923]    069D: B6 00                                 	mov dh, 0
+[ 924]    069F: 0E                                    	push cs
+[ 925]    06A0: 07                                    	pop es
+[ 926]    06A1: BD D7 06                              	mov bp, offset msga
+[ 927]    06A4: B4 13                                 	mov ah, 13h
+[ 928]    06A6: CD 10                                 	int 10h
+[ 929]        :                                       
+[ 930]    06A8: 33 DB                                 xor bx, bx
+[ 931]        :                                       
+[ 932]    06AA: B4 00                                 wait:  mov ah, 0   ; herhangi bir anahtari bekle...
+[ 933]    06AC: CD 16                                 int 16h
+[ 934]        :                                       
+[ 935]    06AE: 3C 1B                                 cmp al, 27  ; anahtar 'esc' basildiginda cikis yap.
+[ 936]    06B0: 74 07                                 je stop
+[ 937]        :                                       
+[ 938]    06B2: B4 0E                                 mov ah, 0eh
+[ 939]    06B4: CD 10                                 int 10h
+[ 940]        :                                       
+[ 941]    06B6: 43                                    inc bx ; her tusa basildginda bx'i artirir
+[ 942]        :                                       
+[ 943]    06B7: EB F1                                 jmp wait
+[ 944]        :                                       
+[ 945]        :                                       
+[ 946]        :                                       ; sonuc mesajini yazdir:
+[ 947]    06B9:                                       stop:  	
+[ 948]    06B9: B0 01                                 mov al, 1
+[ 949]    06BB: B7 00                                 	mov bh, 0
+[ 950]    06BD: B9 18 00                              	mov cx, msgbend - offset msgb ; mesaj boyutunu hesapla.
+[ 951]    06C0: B2 02                                 	mov dl, 2
+[ 952]    06C2: B6 02                                 	mov dh, 2
+[ 953]    06C4: 0E                                    	push cs
+[ 954]    06C5: 07                                    	pop es
+[ 955]    06C6: BD 19 07                              	mov bp, offset msgb
+[ 956]    06C9: B4 13                                 	mov ah, 13h
+[ 957]    06CB: CD 10                                 	int 10h
+[ 958]        :                                       
+[ 959]    06CD: 8B C3                                 mov ax, bx
+[ 960]    06CF: E8 5F 00                              call print_ax
+[ 961]        :                                       
+[ 962]        :                                       ; herhangi bir tusa basilmasini bekleyin:
+[ 963]    06D2: B4 00                                 mov ah, 0
+[ 964]    06D4: CD 16                                 int 16h
+[ 965]        :                                       
+[ 966]    06D6: C3                                    ret ; isletim sisteminden cikis.
+[ 967]        :                                       
+[ 968]    06D7: 54 9A 6D 20 74 75 9F 20 73 61 79 8D   msga db "T",154,"m tu",159," say",141,"s",141,"n",141," sayaca",167,"",141,"m. Durdurmak i",135,"in 'Esc' tu",159,"una bas",141,"n...", 0Dh,0Ah,
+                73 8D 6E 8D 20 73 61 79 61 63 61 A7 
+                8D 6D 2E 20 44 75 72 64 75 72 6D 61 
+                6B 20 69 87 69 6E 20 27 45 73 63 27 
+                20 74 75 9F 75 6E 61 20 62 61 73 8D 
+                6E 2E 2E 2E 0D 0A                   
+[ 969]    0719:                                       msgaend:
+[ 970]    0719: 0D 0A 4B 61 79 64 65 64 69 6C 65 6E   msgb db 0Dh,0Ah, "Kaydedilen tu",159," say",141,"s",141," "
+                20 74 75 9F 20 73 61 79 8D 73 8D 20 
+                                                    
+[ 971]    0731:                                       msgbend:
+[ 972]        :                                       
+[ 973]        :                                       
+[ 974]        :                                       
+[ 975]        :                                       
+[ 976]        :                                       
+[ 977]    0731:                                       print_ax proc
+[ 978]    0731: 3D 00 00                              cmp ax, 0
+[ 979]    0734: 75 09                                 jne print_ax_r
+[ 980]    0736: 50                                    push ax
+[ 981]    0737: B0 30                                 mov al, '0'
+[ 982]    0739: B4 0E                                 mov ah, 0eh
+[ 983]    073B: CD 10                                 int 10h
+[ 984]    073D: 58                                    pop ax
+[ 985]    073E: C3                                    ret
+[ 986]    073F:                                       print_ax_r:
+[ 987]    073F: 60                                    pusha
+[ 988]    0740: BA 00 00                              mov dx, 0
+[ 989]    0743: 3D 00 00                              cmp ax, 0
+[ 990]    0746: 74 12                                 je pn_done
+[ 991]    0748: BB 0A 00                              mov bx, 10
+[ 992]    074B: F7 F3                                 div bx
+[ 993]    074D: E8 EF FF                              call print_ax_r
+[ 994]    0750: 8B C2                                 mov ax, dx
+[ 995]    0752: 04 30                                 add al, 30h
+[ 996]    0754: B4 0E                                 mov ah, 0eh
+[ 997]    0756: CD 10                                 int 10h
+[ 998]    0758: EB 00                                 jmp pn_done
+[ 999]    075A:                                       pn_done:
+[1000]    075A: 61                                    popa
+[1001]    075B: C3                                    ret
+[1002]        :                                       endp
+[1003]        :                                       
+[1004]        :                                       
+[1005]        :                                       
+[1006]    075C:                                       prepared_command:
+[1007]    075C: E8 EE FC                              call clear_screen
+[1008]        :                                       
+[1009]        :                                       ; metin alanini 9 satir yukari kaydir:
+[1010]    075F: B0 09                                 mov     al, 9
+[1011]    0761: E8 6A FC                              call    scroll_t_area
+[1012]        :                                       
+[1013]        :                                       ; imlec konumunu 9 satira ayarla
+[1014]        :                                       ; islem satirinin ustunde:
+[1015]    0764: 50 53 52 B4 02 B6 02 B2 02 B7 00 CD   gotoxy 2,2
+                10 5A 5B 58                         
+[1016]        :                                       
+[1017]    0774: BE B4 01                              lea     si, pre1_msg
+[1018]    0777: E8 C1 FC                              call    print_string
+[1019]        :                                       
+[1020]    077A: 50 53 52 B4 02 B6 03 B2 02 B7 00 CD   gotoxy 2,3
+                10 5A 5B 58                         
+[1021]        :                                       
+[1022]    078A: BE C4 01                              lea     si, pre2_msg
+[1023]    078D: E8 AB FC                              call    print_string
+[1024]        :                                       
+[1025]    0790: 50 53 52 B4 02 B6 04 B2 02 B7 00 CD   gotoxy 2,4
+                10 5A 5B 58                         
+[1026]        :                                       
+[1027]    07A0: BE D2 01                              lea     si, pre3_msg
+[1028]    07A3: E8 95 FC                              call    print_string
+[1029]        :                                       
+[1030]    07A6: B0 01                                 mov     al, 1
+[1031]    07A8: E8 23 FC                              call    scroll_t_area
+[1032]        :                                       
+[1033]    07AB: E9 1F FC                              jmp     processed
+[1034]        :                                       
+ 
+===================================================================================================
+ 
+
+
+
+
+===================================================================================================
